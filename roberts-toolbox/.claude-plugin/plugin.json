@@ -1,0 +1,10 @@
+{
+  "name": "roberts-toolbox",
+  "version": "0.1.0",
+  "description": "Robert's Toolbox: one button that opens your mods and the commands that change Claude Code.",
+  "author": {
+    "name": "Robert Horton, based on a toolbox shown by Tristen O'Brien",
+    "url": "https://tristenobrien.ai/"
+  },
+  "types": "./types/index.d.ts"
+}

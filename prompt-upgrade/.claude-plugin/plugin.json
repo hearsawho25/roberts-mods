@@ -1,0 +1,10 @@
+{
+  "name": "prompt-upgrade",
+  "version": "0.1.0",
+  "description": "Turns a rough prompt into a great one in a pane: up to three quick questions, a rewrite, and a side-by-side review before anything is sent.",
+  "author": {
+    "name": "Robert Horton, from a prompt by Tristen O'Brien",
+    "url": "https://tristenobrien.ai/"
+  },
+  "types": "./types/index.d.ts"
+}

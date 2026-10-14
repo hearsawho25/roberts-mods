@@ -1,0 +1,9 @@
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "description": "Context and prompt-cache meter above the prompt, one-click handoffs to a fresh session, and cache warming with a cold-cache guard.",
+  "author": {
+    "name": "Robert Horton"
+  },
+  "types": "./types/index.d.ts"
+}

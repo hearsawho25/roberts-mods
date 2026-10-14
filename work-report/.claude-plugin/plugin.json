@@ -1,0 +1,10 @@
+{
+  "name": "work-report",
+  "version": "0.1.0",
+  "author": {
+    "name": "Robert Horton, from a prompt by Tristen O'Brien",
+    "url": "https://tristenobrien.ai/"
+  },
+  "description": "A pane that counts the tasks Claude finished for you and estimates the hours and dollars they saved.",
+  "types": "./types/index.d.ts"
+}

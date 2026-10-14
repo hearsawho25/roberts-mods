@@ -1,0 +1,10 @@
+{
+  "name": "clean-view",
+  "version": "0.1.0",
+  "description": "Hides tool calls, diffs and command output and shows one plain-English checklist above the prompt.",
+  "author": {
+    "name": "Robert Horton, from a prompt by Tristen O'Brien",
+    "url": "https://tristenobrien.ai/"
+  },
+  "types": "./types/index.d.ts"
+}

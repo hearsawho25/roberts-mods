@@ -1,0 +1,5 @@
+# CodeGraph index (rebuilt automatically)
+.codegraph/
+
+node_modules/
+*.log

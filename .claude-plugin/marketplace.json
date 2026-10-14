@@ -1,0 +1,37 @@
+{
+    "name": "roberts-mods",
+    "owner": {
+        "name": "Robert Horton"
+    },
+    "description": "Robert's own Claude Code mods.",
+    "plugins": [
+        {
+            "name": "roberts-toolbox",
+            "source": "./roberts-toolbox"
+        },
+        {
+            "name": "daily-challenge",
+            "source": "./daily-challenge"
+        },
+        {
+            "name": "work-report",
+            "source": "./work-report"
+        },
+        {
+            "name": "clean-view",
+            "source": "./clean-view"
+        },
+        {
+            "name": "prompt-upgrade",
+            "source": "./prompt-upgrade"
+        },
+        {
+            "name": "copy-blocks",
+            "source": "./copy-blocks"
+        },
+        {
+            "name": "relay",
+            "source": "./relay"
+        }
+    ]
+}

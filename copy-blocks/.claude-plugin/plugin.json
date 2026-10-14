@@ -1,0 +1,8 @@
+{
+  "name": "copy-blocks",
+  "version": "0.1.0",
+  "description": "A one-click Copy button under every code block in Claude's replies, plus /copyblock, so you get clean text without the box.",
+  "author": {
+    "name": "Robert Horton"
+  }
+}
