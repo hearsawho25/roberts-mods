@@ -5,11 +5,16 @@ import {
   branchCommand,
   buttonStates,
   capDiff,
+  commandLabel,
   COMMIT_TRAILER,
   commitCommand,
   commitDraftPrompt,
-  parseDefaultBranch,
+  gitBashFromExecPath,
+  interceptedCommand,
+  isWindowsPath,
+  isWslBash,
   newFilesText,
+  parseDefaultBranch,
   parseDraft,
   parsePrView,
   parseStatus,
@@ -20,10 +25,13 @@ import {
   pullCommand,
   pushCommand,
   rowText,
+  runOutput,
+  runStatusText,
   stageCommand,
   withTrailer,
 } from './core'
 import type { ButtonId, RepoState } from './core'
+import type { GitShipRunning } from '../types'
 
 /**
  * Git Ship: a repo-status row above the prompt, the `/ship` pane, and buttons that
@@ -39,6 +47,7 @@ type Engine = EngineInterface
 const COLORS = {
   green: '#3DD68C',
   muted: '#7D8590',
+  red: '#F85149',
   text: '#E6EDF3',
 } as const
 
@@ -46,6 +55,8 @@ const repoAtom = atom({ plugin: 'git-ship', key: 'repo' } as const, null)
 const paneOpenAtom = atom({ plugin: 'git-ship', key: 'paneOpen' } as const, false)
 const draftingAtom = atom({ plugin: 'git-ship', key: 'drafting' } as const, false)
 const hasOpenPrAtom = atom({ plugin: 'git-ship', key: 'hasOpenPr' } as const, null)
+const runningAtom = atom({ plugin: 'git-ship', key: 'running' } as const, null)
+const lastRunAtom = atom({ plugin: 'git-ship', key: 'lastRun' } as const, null)
 
 const PANE = 'git-ship'
 const ROW_TITLE = '◆ Ship'
@@ -70,6 +81,27 @@ const DRAFT_MAX_TOKENS = 1024
 const DRAFT_TIMEOUT_MS = 60_000
 /** `git diff` for a draft: plain text whatever the config (no colour, no external differ), paths as written. */
 const DIFF_ARGS = ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff'] as const
+/** How long after a drop the box is checked for the line that ran. */
+const CLEAR_AFTER_MS = 300
+/** A line Git Ship runs when Robert presses Enter on it may take this long. */
+const SHELL_TIMEOUT_MS = 300_000
+/** The run slot frees itself this long after a run started, whatever became of it. */
+const RUN_WATCHDOG_MS = SHELL_TIMEOUT_MS + 10_000
+/** One more read this long after a run that did not finish (it may still be running). */
+const UNFINISHED_REREAD_MS = 30_000
+/** Nothing a run starts may stop to ask for input or open an editor: there is no terminal to answer it. */
+const SHELL_ENV = { GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1', GIT_EDITOR: 'false', GIT_SEQUENCE_EDITOR: 'false' }
+/**
+ * The script every run gets. The line itself travels in GIT_SHIP_COMMAND, never in argv: on
+ * Windows argv is flattened into one command line that MSYS parses again, collapsing
+ * backslashes and running a quoted `\$(…)`.
+ */
+const SHELL_SCRIPT = 'eval "$GIT_SHIP_COMMAND"'
+const NO_GIT_BASH = 'Git Ship: could not find Git Bash — run it yourself.'
+const COULD_NOT_RUN = 'Git Ship could not run it — nothing was sent'
+const COULD_NOT_READ = 'Git Ship: could not read git here — nothing was sent'
+/** How long an intercepted line waits for a git read, well inside the hook's 10 s budget. */
+const LINE_READ_WAIT_MS = 6_000
 
 /** The pane's buttons, in order. */
 const BUTTONS: ReadonlyArray<{ id: ButtonId; label: string }> = [
@@ -90,6 +122,12 @@ const runtime = {
   queued: null as Promise<void> | null,
   /** Each root's default branch, worked out once. */
   bases: new Map<string, { name: string; ref: string }>(),
+  /** Git Bash's path, found once a session (a failed search is tried again next line). */
+  bashPath: null as string | null,
+  /** The last run token handed out: each run is told apart by its own, never by its command. */
+  runToken: 0,
+  /** The tokens of the runs this load has going. */
+  activeRuns: new Set<number>(),
 }
 
 function errorText(err: unknown): string {
@@ -105,15 +143,16 @@ async function sessionRoot($: Engine): Promise<string | undefined> {
   }
 }
 
-/** One read-only command's result, or undefined when it could not start or timed out. */
+/** One command's result, or undefined when it could not start or timed out (git's 5 s unless told otherwise). */
 async function run(
   $: Engine,
   root: string,
   argv: readonly string[],
   env?: Record<string, string>,
+  timeoutMs: number = GIT_TIMEOUT_MS,
 ): Promise<ProcessRunResult | undefined> {
   try {
-    return await $.process.run(argv, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(env !== undefined ? { env } : {}) })
+    return await $.process.run(argv, { cwd: root, timeoutMs, ...(env !== undefined ? { env } : {}) })
   } catch {
     return undefined
   }
@@ -437,6 +476,202 @@ async function draftPr($: Engine, repo: RepoState) {
   }
 }
 
+/**
+ * Git Bash: CLAUDE_CODE_GIT_BASH_PATH when set, else derived from `git --exec-path` on
+ * Windows (OS says so, or the repo sits on a drive letter), else plain `bash`. Never a bare
+ * `bash` on Windows, and never WSL's (System32 or WindowsApps); on Windows the env var must be
+ * absolute (a drive letter or `\\`). A path found is checked once (`-c 'exit 0'`) before its
+ * first use. Null when it cannot be found. An engine failure reading the environment rejects:
+ * the hook's catch drops the line.
+ */
+async function gitBash($: Engine, root: string): Promise<string | null> {
+  if (runtime.bashPath !== null) return runtime.bashPath
+  const isWindows = (await $.env.get('OS')) === 'Windows_NT' || isWindowsPath(root)
+  const configured = (await $.env.get('CLAUDE_CODE_GIT_BASH_PATH'))?.trim() ?? ''
+  let found: string | null
+  if (configured !== '') found = !isWindows || isWindowsPath(configured) || configured.startsWith('\\\\') ? configured : null
+  else if (isWindows) found = gitBashFromExecPath(await git($, root, ['--exec-path']))
+  else found = 'bash'
+  if (found !== null && isWslBash(found)) found = null
+  if (found !== null) {
+    const check = await run($, root, [found, '-c', 'exit 0'], SHELL_ENV)
+    if (check?.exitCode !== 0) found = null
+  }
+  runtime.bashPath = found
+  return found
+}
+
+/** Whether `work` settled within `ms` (false at the cap, or when there is no clock to cap it by and it never settles). */
+async function settlesWithin($: Engine, work: Promise<unknown>, ms: number): Promise<boolean> {
+  let fire = () => {}
+  const cap = new Promise<false>(resolve => {
+    fire = () => resolve(false)
+  })
+  let timer: Timer | null = null
+  try {
+    timer = $.clock.after(ms, () => fire())
+  } catch {
+    timer = null
+  }
+  try {
+    return await Promise.race([work.then(() => true as const, () => true as const), cap])
+  } finally {
+    timer?.cancel()
+  }
+}
+
+/** Puts Robert's dropped line back in the prompt box, so his edits survive the drop. */
+async function restoreLine($: Engine, text: string) {
+  try {
+    await $.prompt.fill({ text, mode: 'replace' })
+  } catch {
+    // The drop's reason still shows.
+  }
+}
+
+/**
+ * Drops a line Git Ship could not run, putting it back in the box first, unless the hook's
+ * dispatch already ended (`signal`): its catch dropped and restored the line then, and what
+ * Robert typed since must stand.
+ */
+async function dropAndRestore($: Engine, text: string, reason: string, signal?: AbortSignal): Promise<{ drop: string }> {
+  if (signal?.aborted !== true) await restoreLine($, text)
+  return { drop: reason }
+}
+
+/** Claims the one run slot for `command` under a fresh token: the run already going when it is taken. */
+async function startRunning($: Engine, command: string): Promise<{ already: GitShipRunning | null; token: number }> {
+  const token = ++runtime.runToken
+  let already: GitShipRunning | null = null
+  // update may run the change again on a write miss: the last run is the one written.
+  await update($, runningAtom, running => {
+    already = running
+    return running ?? { command, token }
+  })
+  return { already, token }
+}
+
+/** Frees the run slot only while it still holds `token`'s run. */
+async function stopRunning($: Engine, token: number) {
+  runtime.activeRuns.delete(token)
+  await update($, runningAtom, running => (running?.token === token ? null : running))
+}
+
+/** Whether the pane is open, by the engine's own list. */
+async function isPaneOpen($: Engine): Promise<boolean> {
+  try {
+    return (await $.ui.panes()).some(pane => pane.id === PANE)
+  } catch {
+    return read($, paneOpenAtom)
+  }
+}
+
+/** Reads git again a while from now; no clock, no second read. */
+function refreshLater($: Engine, ms: number) {
+  try {
+    $.clock.after(ms, () => {
+      void refresh($).catch(() => undefined)
+    })
+  } catch {
+    // No clock: the read after the run stands.
+  }
+}
+
+/**
+ * Runs a claimed line in Git Bash from the repo root, records it, reports it, then reads git
+ * again. A watchdog frees the slot whatever becomes of the run. `text` is the line as
+ * submitted, put back in the box when Git Bash would not start.
+ */
+async function runLine($: Engine, root: string, bash: string, command: string, text: string, token: number) {
+  const label = commandLabel(command)
+  runtime.activeRuns.add(token)
+  let watchdog: Timer | null = null
+  try {
+    watchdog = $.clock.after(RUN_WATCHDOG_MS, () => {
+      void stopRunning($, token).catch(() => undefined)
+    })
+  } catch {
+    watchdog = null
+  }
+  try {
+    const startedAt = await $.clock.now().catch(() => 0)
+    const result = await run($, root, [bash, '-c', SHELL_SCRIPT], { ...SHELL_ENV, GIT_SHIP_COMMAND: command }, SHELL_TIMEOUT_MS)
+    const at = await $.clock.now().catch(() => startedAt)
+    // process.run rejects only when the command cannot start or outlives its timeout: a
+    // rejection well before the timeout means Git Bash itself would not start (a backstop to
+    // the check gitBash made). With no clock to tell, it counts as not finished.
+    if (result === undefined && startedAt !== 0 && at - startedAt < SHELL_TIMEOUT_MS - 1_000) {
+      runtime.bashPath = null
+      $.ui.toast(NO_GIT_BASH)
+      await restoreLine($, text)
+      return
+    }
+    const exitCode = result === undefined ? null : result.exitCode
+    const output = result === undefined ? '' : runOutput(result.stdout, result.stderr, result.isStdoutTruncated || result.isStderrTruncated)
+    await update($, lastRunAtom, () => ({ command, exitCode, output, at }))
+    if (exitCode === 0) {
+      $.ui.toast(`Git Ship: ${label} done`)
+    } else {
+      $.ui.toast(exitCode === null ? `Git Ship: ${label} did not finish — it may still be running` : `Git Ship: ${label} failed (exit ${exitCode}) — see the pane`)
+      if (exitCode === null) refreshLater($, UNFINISHED_REREAD_MS)
+      if (!(await isPaneOpen($))) await openPane($)
+    }
+  } catch (err) {
+    $.ui.toast(`Git Ship: ${label} — ${errorText(err)}`)
+  } finally {
+    watchdog?.cancel()
+    await stopRunning($, token).catch(() => undefined)
+    void refresh($).catch(() => undefined)
+  }
+}
+
+/**
+ * A `!git` / `!gh` line Robert pressed Enter on: dropped before it reaches Claude, and run
+ * by Git Ship in Git Bash beside the hook (never awaited, so the prompt box is free at once).
+ * The drop's reason is what Robert sees.
+ */
+async function interceptLine($: Engine, repo: RepoState, command: string, text: string, signal: AbortSignal): Promise<{ drop: string }> {
+  const running = await read($, runningAtom)
+  if (running !== null) return dropAndRestore($, text, `Git Ship is still running ${commandLabel(running.command)}`, signal)
+  const bash = await gitBash($, repo.root)
+  if (bash === null) return dropAndRestore($, text, NO_GIT_BASH, signal)
+  // The dispatch ended while this hook waited: its catch already dropped the line and
+  // handed it back, so running it now would run it twice.
+  if (signal.aborted) return { drop: COULD_NOT_RUN }
+  const { already, token } = await startRunning($, command)
+  if (already !== null) return dropAndRestore($, text, `Git Ship is still running ${commandLabel(already.command)}`, signal)
+  void runLine($, repo.root, bash, command, text, token).catch(() => undefined)
+  void clearRanLine($, text).catch(() => undefined)
+  return { drop: `Git Ship ran: ${commandLabel(command)}` }
+}
+
+/**
+ * The engine hands a dropped prompt back to the box, where a second Enter would run it again.
+ * Once the drop has landed, clears the box when it still holds the line that ran; leaves
+ * anything Robert has typed since.
+ */
+async function clearRanLine($: Engine, text: string) {
+  await new Promise<void>(resolve => {
+    $.clock.after(CLEAR_AFTER_MS, () => resolve())
+  })
+  const box = (await $.prompt.read()).text
+  if (box.trim() === text.trim()) await $.prompt.fill({ text: '', mode: 'replace' })
+}
+
+/**
+ * The repo for an intercepted line: the last read, or a fresh one when there is none or it
+ * failed. Undefined outside a repo (the line passes on); 'error' when git still cannot be read.
+ */
+async function repoForLine($: Engine): Promise<RepoState | 'error' | undefined> {
+  let repo = await read($, repoAtom)
+  if (repo === null || repo === 'error') {
+    // Capped well inside the hook's budget: a read still out at the cap counts as unreadable.
+    if (!(await settlesWithin($, refresh($), LINE_READ_WAIT_MS))) return 'error'
+    repo = await read($, repoAtom)
+  }
+  return repo === null ? undefined : repo
+}
+
 /** A pane button, judged again at press time: a disabled one does nothing, drawn dim or not. */
 async function pressButton($: Engine, id: ButtonId) {
   if (id === 'close') return closePane($)
@@ -484,8 +719,11 @@ export const register: Register = on => {
       description: 'Open the Git Ship pane — repo status and ready-to-run git commands',
       immediate: true,
     })
-    // A fresh load has no draft running: a reload mid-draft would leave the draft buttons dim.
+    // A fresh load has no draft or run going: a reload mid-way would leave them stuck.
     await update($, draftingAtom, () => false)
+    // A run of an earlier load is gone with it; one this load still has going stays.
+    await update($, runningAtom, running => (running !== null && runtime.activeRuns.has(running.token) ? running : null))
+    runtime.bashPath = null
     // No hook waits on git: every refresh runs beside the event.
     void refresh($)
     return next(e)
@@ -502,12 +740,26 @@ export const register: Register = on => {
     return result
   }).catch(($, e, next) => next(e))
 
-  // A `!` shell command Robert ran may have changed the repo.
+  // A filled `!git` / `!gh` line Robert pressed Enter on is Git Ship's to run, never Claude's:
+  // a plugin fill cannot put the box in shell mode, so it would otherwise go to Claude as a prompt.
+  // Any other `!` shell command Robert ran may have changed the repo.
   on('prompt.submit', async ($, e, next) => {
+    const command = e.origin.kind === 'composer' ? interceptedCommand(e.text) : null
+    if (command !== null) {
+      const repo = await repoForLine($)
+      if (repo === 'error') return dropAndRestore($, e.text, COULD_NOT_READ, next.signal)
+      if (repo !== undefined) return interceptLine($, repo, command, e.text, next.signal)
+    }
     const result = await next(e)
     if (e.text.trimStart().startsWith('!')) refreshAfterShell($)
     return result
-  }).catch(($, e, next) => next(e))
+  }).catch(async ($, e, next) => {
+    // A line of Git Ship's own never falls through to Claude, whatever broke.
+    if (!next.called && e.origin.kind === 'composer' && interceptedCommand(e.text) !== null) {
+      return dropAndRestore($, e.text, COULD_NOT_RUN)
+    }
+    return next(e)
+  })
 
   // The person's own close (the pane's mark or key) keeps the row's button in step.
   on('ui.close', async ($, e, next) => {
@@ -520,7 +772,12 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     // A drawing that throws would drop the pane (an unload close): a dim line instead.
     try {
-      const [repo, drafting, hasOpenPr] = await Promise.all([read($, repoAtom), read($, draftingAtom), read($, hasOpenPrAtom)])
+      const [repo, drafting, hasOpenPr, lastRun] = await Promise.all([
+        read($, repoAtom),
+        read($, draftingAtom),
+        read($, hasOpenPrAtom),
+        read($, lastRunAtom),
+      ])
       if (repo === null) return <Text dimColor>Not inside a git repository.</Text>
       if (repo === 'error') return <Text dimColor>git unavailable.</Text>
       const states = buttonStates(repo, { drafting, hasOpenPr })
@@ -562,6 +819,21 @@ export const register: Register = on => {
             </Box>
           ))}
         </Box>
+        {lastRun === null ? null : (
+          <Box key="git-ship-run" flexDirection="column">
+            <Box key="git-ship-run-command">
+              <Text color={COLORS.text}>{`$ ${lastRun.command}`}</Text>
+            </Box>
+            {lastRun.output === '' ? null : (
+              <Box key="git-ship-run-output">
+                <Text color={COLORS.muted}>{lastRun.output}</Text>
+              </Box>
+            )}
+            <Box key="git-ship-run-status">
+              <Text color={lastRun.exitCode === 0 ? COLORS.green : COLORS.red}>{runStatusText(lastRun.exitCode)}</Text>
+            </Box>
+          </Box>
+        )}
       </Box>
       )
     } catch (err) {
@@ -572,7 +844,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     if (e.props.hasSurvey) return below
-    const [repo, paneOpen] = await Promise.all([read($, repoAtom), read($, paneOpenAtom)])
+    const [repo, paneOpen, running] = await Promise.all([read($, repoAtom), read($, paneOpenAtom), read($, runningAtom)])
     if (repo === null) return below
     const { Box, Text, Button } = $.ui.resolve(e)
     const row =
@@ -593,7 +865,7 @@ export const register: Register = on => {
           <Box key="git-ship-text" flexShrink={1}>
             <Text>
               <Text color={COLORS.green} bold>{ROW_TITLE}</Text>
-              <Text dimColor>{`  ${rowText(repo)}`}</Text>
+              <Text dimColor>{`  ${rowText(repo)}${running === null ? '' : ` · running ${commandLabel(running.command)}…`}`}</Text>
             </Text>
           </Box>
           <Box key="git-ship-spacer" flexGrow={1} />

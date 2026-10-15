@@ -26,6 +26,26 @@ export type GitShipRepo = {
   baseRef: string
 }
 
+/** The line Git Ship is running now. */
+export type GitShipRunning = {
+  /** The text after `!`, as submitted. */
+  command: string
+  /** This run's own token: only its own run (or a later load) clears the slot, never a run of the same command. */
+  token: number
+}
+
+/** One line Git Ship ran when Robert pressed Enter on it. */
+export type GitShipRun = {
+  /** The text after `!`, as submitted. */
+  command: string
+  /** null when the run threw or timed out. */
+  exitCode: number | null
+  /** stdout then stderr, the last 30 lines. */
+  output: string
+  /** When it finished, epoch ms. */
+  at: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'git-ship': {
@@ -37,6 +57,10 @@ declare module 'claude-code' {
       drafting: boolean
       /** Whether the branch has an open PR, checked when the pane opens; null when not checked. */
       hasOpenPr: boolean | null
+      /** The `!git`/`!gh` line Git Ship is running now, with its run's token; null when none. */
+      running: GitShipRunning | null
+      /** The last line Git Ship ran; null before the first. */
+      lastRun: GitShipRun | null
     }
   }
 }

@@ -7,8 +7,13 @@ import {
   branchCommand,
   buttonStates,
   capDiff,
+  commandLabel,
   commitCommand,
   commitDraftPrompt,
+  gitBashFromExecPath,
+  interceptedCommand,
+  isWindowsPath,
+  isWslBash,
   newFilesText,
   parseDefaultBranch,
   parseDraft,
@@ -20,6 +25,8 @@ import {
   pullCommand,
   pushCommand,
   rowText,
+  runOutput,
+  runStatusText,
   stageCommand,
   withTrailer,
 } from '../hooks/core'
@@ -330,5 +337,86 @@ describe('newFilesText', () => {
 
   test('no files gives an empty string', () => {
     expect(newFilesText([])).toBe('')
+  })
+})
+
+describe('running a filled command', () => {
+  test('interceptedCommand: only !git and !gh lines, the text after ! kept verbatim', () => {
+    expect(interceptedCommand('!git push')).toBe('git push')
+    expect(interceptedCommand('  !gh pr view --web  ')).toBe('gh pr view --web  ')
+    expect(interceptedCommand('!git commit -m "a" -m "b\nc"')).toBe('git commit -m "a" -m "b\nc"')
+    expect(interceptedCommand('!ls')).toBeNull()
+    expect(interceptedCommand('!gitk')).toBeNull()
+    expect(interceptedCommand('!git')).toBeNull()
+    expect(interceptedCommand('git push')).toBeNull()
+    expect(interceptedCommand('please !git push')).toBeNull()
+    expect(interceptedCommand('\n\t  !git push')).toBe('git push')
+    expect(interceptedCommand('!gh')).toBeNull()
+  })
+
+  test('gitBashFromExecPath: three folders up, then bin/bash.exe', () => {
+    expect(gitBashFromExecPath('D:/Program Files/Git/mingw64/libexec/git-core\n')).toBe('D:/Program Files/Git/bin/bash.exe')
+    expect(gitBashFromExecPath('C:\\Program Files\\Git\\mingw64\\libexec\\git-core\\')).toBe('C:/Program Files/Git/bin/bash.exe')
+    expect(gitBashFromExecPath('/git-core')).toBeNull()
+    expect(gitBashFromExecPath('')).toBeNull()
+    expect(gitBashFromExecPath(undefined)).toBeNull()
+  })
+
+  test('runOutput: stdout then stderr, the last 30 lines', () => {
+    expect(runOutput('out 1\nout 2\n', 'err 1\n')).toBe('out 1\nout 2\nerr 1')
+    expect(runOutput('', 'only err\r\n')).toBe('only err')
+    expect(runOutput('', '')).toBe('')
+    const many = Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n')
+    expect(runOutput(many, '')).toBe(Array.from({ length: 30 }, (_, i) => `line ${i + 10}`).join('\n'))
+  })
+
+  test('runOutput: each line capped at 500 characters', () => {
+    expect(runOutput('x'.repeat(800), '')).toBe(`${'x'.repeat(500)}…`)
+  })
+
+  test('runOutput: the total capped at 4,000 characters, keeping the end, marked', () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `${String(i).padStart(2, '0')}${'y'.repeat(298)}`)
+    const out = runOutput(lines.join('\n'), '')
+    expect(out.length).toBeLessThanOrEqual(4_000 + '\n… (output truncated)'.length)
+    expect(out.endsWith('\n… (output truncated)')).toBe(true)
+    expect(out).toContain(lines[29] ?? '')
+    expect(out).not.toContain(lines[0] ?? '')
+  })
+
+  test('runOutput: ANSI escapes and control characters stripped, newlines kept; a carriage return keeps what was redrawn last', () => {
+    expect(runOutput('\u001b[32mgreen\u001b[0m\nbell\u0007 done\u0000\n', '')).toBe('green\nbell done')
+    expect(runOutput('Counting 50%\rCounting 100%\n', '')).toBe('Counting 100%')
+    expect(runOutput('a\tb\n', '')).toBe('a b')
+  })
+
+  test('runOutput: an engine-truncated stream is marked', () => {
+    expect(runOutput('head\n', '', true)).toBe('head\n… (output truncated)')
+    expect(runOutput('', '', true)).toBe('… (output truncated)')
+  })
+
+  test('isWslBash: System32 and WindowsApps bash are WSL, never Git Bash', () => {
+    expect(isWslBash('C:\\Windows\\System32\\bash.exe')).toBe(true)
+    expect(isWslBash('c:/windows/system32/BASH.EXE')).toBe(true)
+    expect(isWslBash('C:\\Users\\r\\AppData\\Local\\Microsoft\\WindowsApps\\bash.exe')).toBe(true)
+    expect(isWslBash('D:/Program Files/Git/bin/bash.exe')).toBe(false)
+    expect(isWslBash('bash')).toBe(false)
+  })
+
+  test('isWindowsPath: a drive letter', () => {
+    expect(isWindowsPath('D:/Projects/app')).toBe(true)
+    expect(isWindowsPath('c:\\x')).toBe(true)
+    expect(isWindowsPath('/home/r/app')).toBe(false)
+  })
+
+  test('commandLabel: the first line, cut to 60 characters', () => {
+    expect(commandLabel('git push')).toBe('git push')
+    expect(commandLabel('git commit -m "a"\n-m "b"')).toBe('git commit -m "a"…')
+    expect(commandLabel(`git ${'x'.repeat(80)}`)).toBe(`git ${'x'.repeat(56)}…`)
+  })
+
+  test('runStatusText', () => {
+    expect(runStatusText(0)).toBe('✓ exit 0')
+    expect(runStatusText(1)).toBe('✗ exit 1')
+    expect(runStatusText(null)).toBe('✗ did not finish — it may still be running')
   })
 })

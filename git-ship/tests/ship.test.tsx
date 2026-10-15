@@ -500,9 +500,10 @@ describe('refresh', () => {
     expect(seen.ran).toEqual([])
     // This proves the read comes after next(e) against the mock only, not that a
     // live `!` command reaches prompt.submit or has finished by then.
+    // A `!git` / `!gh` line is Git Ship's own to run (run.test.tsx); any other `!` line passes.
     seen.outputs[STATUS] = status()
-    await $.prompt.submit({ text: '!git status', origin: { kind: 'composer' }, wait: false })
-    expect(seen.submitted).toEqual(['hello', '!git status'])
+    await $.prompt.submit({ text: '!ls', origin: { kind: 'composer' }, wait: false })
+    expect(seen.submitted).toEqual(['hello', '!ls'])
     await waitFor(async () => (await bandText($)) === CLEAN, 'the clean row')
     const reads = seen.ran.filter(argv => argv === STATUS).length
     await seen.clock.advance(1_500)

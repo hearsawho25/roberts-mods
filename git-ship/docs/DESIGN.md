@@ -5,9 +5,31 @@ Approved by Robert on 2026-10-14. The mod shows the state of the current git rep
 ## Rules
 
 - **Fill only, never send.** Every button calls `$.prompt.fill` with mode `replace`. The mod never calls `$.prompt.submit`.
-- **The mod's own git use is read-only.** It runs only `status`, `log`, `diff`, `rev-parse`, `symbolic-ref` and `gh pr view`. Every write goes through a command Robert sends himself.
+- **Writes only on Robert's Enter.** On its own account the mod runs only read-only commands: `status`, `log`, `diff`, `ls-files`, `rev-parse`, `symbolic-ref` and `gh pr view`. A write runs only when Robert presses Enter on a `!git` or `!gh` line (see "Running a filled command").
 - **No hint-line button.** The pane is reached from the row's `[ Open ]`, from `/ship`, or from Robert's Toolbox, which runs the mod's first registered command, `/ship`.
 - **Shares the band.** The AbovePrompt hook always calls `next(e)` and adds its row to what comes back, the same way Relay does.
+
+## Running a filled command (changed 2026-10-14)
+
+A plugin fill can't put the prompt box into shell mode. A filled `!git push` would otherwise go to Claude as a normal message, and Claude would run it as a tool call. Robert chose to have the mod run the line itself, but only when he presses Enter:
+
+- **When it intercepts:** a `prompt.submit` hook catches any submitted line that, once trimmed, starts with `!git ` or `!gh `, while the session is in a repo. The prompt is dropped and never reaches Claude. The drop reason shown is `Git Ship ran: <command>`.
+- **How it runs:** the text after `!`, including any edits Robert made, is passed through the environment as `GIT_SHIP_COMMAND` and run as `<git-bash> -c 'eval "$GIT_SHIP_COMMAND"'` from the repo root.
+  - It is never put on the command line. On Windows, MSYS parses argv a second time, which collapses backslashes. In a test that second parse ran a `\$(…)` from inside a quoted message.
+  - The timeout is 300 s, which leaves room for a credential window.
+  - `GIT_TERMINAL_PROMPT=0`, `GH_PROMPT_DISABLED=1`, `GIT_EDITOR=false` and `GIT_SEQUENCE_EDITOR=false` are set, so nothing can hang waiting for input or an editor. A `git commit` without `-m` fails at once instead.
+  - The Git Bash path is `CLAUDE_CODE_GIT_BASH_PATH` if that is set. Otherwise it's worked out from `git --exec-path`: three folders up, then `bin/bash.exe` (`D:/Program Files/Git/bin/bash.exe` on Robert's machine).
+  - On non-Windows it's plain `bash`.
+  - It must never be a bare `bash` on Windows, because `C:\Windows\System32\bash.exe` is WSL. Paths ending in `System32\bash.exe` or `WindowsApps\bash.exe` are refused.
+- **What counts as Enter:** only a `prompt.submit` with `origin.kind === 'composer'`. That is Robert's Enter, including a line queued mid-turn, which runs at once. Bridge, SDK, peer and plugin submissions pass through untouched.
+- **Robert's own typed `!git …` is caught too.** Its output goes to the pane, not into Claude's context.
+- **Never to Claude by accident:** if the hook fails, or git state can't be read, an intercepted line is dropped with a message and put back in the box. It is never passed on.
+- **Output limits:** each line is capped at 500 characters and the whole output at 4,000. ANSI and control characters are stripped. The output is marked `… (output truncated)` when the process cut a stream.
+- **Output:** the pane shows the last run: `$ <command>`, the last 30 lines of combined output, and `✓ exit 0`, `✗ exit N`, or `✗ did not finish — it may still be running`. A run that didn't finish gets one more refresh 30 s later. A toast reports the outcome: `Git Ship: git push done`, or `… failed (exit N) — see the pane`. A failure opens the pane.
+- **One at a time:** while a command runs, the row shows `running <command>…`. A second intercepted line is dropped with `Git Ship is still running <command>`.
+- After every run, the mod refreshes git state.
+- **Clearing the box:** Claude Code puts a dropped prompt back in the box. About 300 ms after a successful intercept, the mod clears the box, but only if it still holds that exact line, so a second Enter can't run it twice.
+- **The rule changes** from "the mod never runs a git write" to "the mod runs a write only when Robert presses Enter on the line". The buttons themselves still only fill.
 
 ## Presence
 
@@ -28,7 +50,7 @@ Approved by Robert on 2026-10-14. The mod shows the state of the current git rep
 - The mod re-reads git state:
   - when the session starts
   - after each turn completes
-  - after a prompt beginning with `!` (a shell command Robert ran) has been handled
+  - after a prompt beginning with `!` (a shell command Robert ran) has been handled, and once more 1.5 s later.
   - when the pane opens
 - It doesn't poll on a timer.
 - Concurrent refreshes coalesce. If a refresh is already running, one more is queued, never several.
@@ -63,7 +85,7 @@ Approved by Robert on 2026-10-14. The mod shows the state of the current git rep
   - The body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 - While a draft is running, the pane shows `drafting…` and the draft buttons are disabled.
 - If the call fails, the button fills the command with empty `-m ""` (or `--title "" --body ""`), and a toast says the draft failed.
-- **Quoting:** `!` commands run in Git Bash on Robert's machine. This was confirmed on 2026-10-14: `! echo "shell:$0"` printed `shell:/usr/bin/bash`, even though the machine's primary shell is PowerShell. If that ever changes, the quoting must change too, because PowerShell doesn't treat `\` as an escape. Each message part is wrapped in double quotes, and `\`, `"`, `$` and `` ` `` are backslash-escaped. Newlines are kept inside the quotes.
+- **Quoting:** filled commands run in Git Bash, through the mod (see "Running a filled command"). This was confirmed on 2026-10-14: `! echo "shell:$0"` printed `shell:/usr/bin/bash`, even though the machine's primary shell is PowerShell. If that ever changes, the quoting must change too, because PowerShell doesn't treat `\` as an escape. Each message part is wrapped in double quotes, and `\`, `"`, `$` and `` ` `` are backslash-escaped. Newlines are kept inside the quotes.
 
 ## Files
 
@@ -85,7 +107,7 @@ Approved by Robert on 2026-10-14. The mod shows the state of the current git rep
 
   Helpers that take `$` are top-level functions in this file, as the validator requires.
 - `types/index.d.ts` is the `PluginState` contract.
-- `tests/core.test.ts`, `tests/ship.test.tsx` and `tests/draft.test.tsx` hold the tests.
+- `tests/core.test.ts`, `tests/ship.test.tsx`, `tests/draft.test.tsx` and `tests/run.test.tsx` hold the tests.
 
 ## Out of scope (v1)
 
