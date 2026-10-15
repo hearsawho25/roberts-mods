@@ -1,0 +1,9 @@
+{
+  "name": "git-ship",
+  "version": "0.1.0",
+  "description": "Repo status row above the prompt and a /ship pane whose buttons fill ready-to-run git and gh commands — you press Enter.",
+  "author": {
+    "name": "Robert Horton"
+  },
+  "types": "./types/index.d.ts"
+}
