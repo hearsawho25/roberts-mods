@@ -7,6 +7,7 @@ import {
   branchCommand,
   buttonStates,
   capDiff,
+  commandHeadline,
   commandLabel,
   commitCommand,
   commitDraftPrompt,
@@ -418,5 +419,15 @@ describe('running a filled command', () => {
     expect(runStatusText(0)).toBe('✓ exit 0')
     expect(runStatusText(1)).toBe('✗ exit 1')
     expect(runStatusText(null)).toBe('✗ did not finish — it may still be running')
+  })
+})
+
+describe('commandHeadline', () => {
+  test('a one-line command is shown whole', () => {
+    expect(commandHeadline('git push -u origin "feat"')).toBe('git push -u origin "feat"')
+  })
+
+  test('a multi-line command shows its first line and how many follow', () => {
+    expect(commandHeadline('git commit -m "Subject" -m "Body\nmore\nend"')).toBe('git commit -m "Subject" -m "Body…  (+2 lines)')
   })
 })

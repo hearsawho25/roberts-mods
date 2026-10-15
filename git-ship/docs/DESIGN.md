@@ -25,7 +25,7 @@ A plugin fill can't put the prompt box into shell mode. A filled `!git push` wou
 - **Robert's own typed `!git …` is caught too.** Its output goes to the pane, not into Claude's context.
 - **Never to Claude by accident:** if the hook fails, or git state can't be read, an intercepted line is dropped with a message and put back in the box. It is never passed on.
 - **Output limits:** each line is capped at 500 characters and the whole output at 4,000. ANSI and control characters are stripped. The output is marked `… (output truncated)` when the process cut a stream.
-- **Output:** the pane shows the last run: `$ <command>`, the last 30 lines of combined output, and `✓ exit 0`, `✗ exit N`, or `✗ did not finish — it may still be running`. A run that didn't finish gets one more refresh 30 s later. A toast reports the outcome: `Git Ship: git push done`, or `… failed (exit N) — see the pane`. A failure opens the pane.
+- **Output:** the pane shows the last run: `$ <first line of the command>` with `(+N lines)` when it has more, the last 30 lines of combined output, and `✓ exit 0`, `✗ exit N`, or `✗ did not finish — it may still be running`. A run that didn't finish gets one more refresh 30 s later. A toast reports the outcome: `Git Ship: git push done`, or `… failed (exit N) — see the pane`. A failure opens the pane.
 - **One at a time:** while a command runs, the row shows `running <command>…`. A second intercepted line is dropped with `Git Ship is still running <command>`.
 - After every run, the mod refreshes git state.
 - **Clearing the box:** Claude Code puts a dropped prompt back in the box. About 300 ms after a successful intercept, the mod clears the box, but only if it still holds that exact line, so a second Enter can't run it twice.

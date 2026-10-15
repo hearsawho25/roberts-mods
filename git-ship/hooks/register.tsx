@@ -5,6 +5,7 @@ import {
   branchCommand,
   buttonStates,
   capDiff,
+  commandHeadline,
   commandLabel,
   COMMIT_TRAILER,
   commitCommand,
@@ -822,7 +823,7 @@ export const register: Register = on => {
         {lastRun === null ? null : (
           <Box key="git-ship-run" flexDirection="column">
             <Box key="git-ship-run-command">
-              <Text color={COLORS.text}>{`$ ${lastRun.command}`}</Text>
+              <Text color={COLORS.text}>{`$ ${commandHeadline(lastRun.command)}`}</Text>
             </Box>
             {lastRun.output === '' ? null : (
               <Box key="git-ship-run-output">
