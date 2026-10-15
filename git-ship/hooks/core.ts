@@ -362,11 +362,15 @@ export function commandLabel(command: string): string {
   return chars.length > LABEL_MAX || nl !== -1 ? `${chars.slice(0, LABEL_MAX).join('')}…` : first
 }
 
-/** The pane's `$` line for a run: the command's first line whole, and how many lines follow it. */
+const HEADLINE_MAX = 100
+
+/** The pane's `$` line for a run: the command's first line, cut to 100 characters, and how many lines follow it. */
 export function commandHeadline(command: string): string {
   const lines = command.split('\n')
-  const first = (lines[0] ?? '').trimEnd()
-  return lines.length > 1 ? `${first}…  (+${lines.length - 1} lines)` : first
+  const chars = Array.from((lines[0] ?? '').trimEnd())
+  const isCut = chars.length > HEADLINE_MAX || lines.length > 1
+  const first = isCut ? `${chars.slice(0, HEADLINE_MAX).join('')}…` : chars.join('')
+  return lines.length > 1 ? `${first}  (+${lines.length - 1} lines)` : first
 }
 
 /** A run's last line in the pane: `✓ exit 0`, `✗ exit N`, or that it did not finish (timed out, and may still be running). */

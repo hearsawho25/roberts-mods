@@ -427,6 +427,12 @@ describe('commandHeadline', () => {
     expect(commandHeadline('git push -u origin "feat"')).toBe('git push -u origin "feat"')
   })
 
+  test('a first line over 100 characters is cut there', () => {
+    const long = `git commit -m "${'x'.repeat(120)}"`
+    expect(commandHeadline(long)).toBe(`${long.slice(0, 100)}…`)
+    expect(commandHeadline(`${long}\nbody`)).toBe(`${long.slice(0, 100)}…  (+1 lines)`)
+  })
+
   test('a multi-line command shows its first line and how many follow', () => {
     expect(commandHeadline('git commit -m "Subject" -m "Body\nmore\nend"')).toBe('git commit -m "Subject" -m "Body…  (+2 lines)')
   })
