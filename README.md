@@ -23,6 +23,7 @@ Install as many as you like, then run `/reload-plugins` or start a new session.
 | `copy-blocks` | `/copyblock [n]` | A Copy button under every code block in Claude's replies, so you get clean text without the frame. |
 | `relay` | `/relay`, `/handoff`, `/keepwarm` | A context and prompt-cache meter above the prompt, one-click handoffs to a fresh session, and cache warming with a cold-cache guard. See [relay/README.md](relay/README.md). |
 | `git-ship` | `/ship` | Repo status above the prompt, and a pane whose buttons fill ready-to-run `git` and `gh` commands (commit messages and PRs drafted for you). It never runs a write: you press Enter. See [git-ship/README.md](git-ship/README.md). |
+| `mod-doctor` | `/mod-doctor` | Checks that every enabled mod actually loaded. Stays quiet until one didn't, then shows a red row and the reason from `claude plugin validate`. See [mod-doctor/README.md](mod-doctor/README.md). |
 
 ## Credits
 

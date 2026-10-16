@@ -36,6 +36,10 @@
         {
             "name": "git-ship",
             "source": "./git-ship"
+        },
+        {
+            "name": "mod-doctor",
+            "source": "./mod-doctor"
         }
     ]
 }

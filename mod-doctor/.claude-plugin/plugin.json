@@ -1,0 +1,7 @@
+{
+  "name": "mod-doctor",
+  "version": "0.1.0",
+  "description": "Checks that every enabled mod's hooks module actually loaded, and shows why one didn't. Quiet unless something is broken; /mod-doctor opens the report.",
+  "author": { "name": "Robert Horton" },
+  "types": "./types/index.d.ts"
+}
