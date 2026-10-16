@@ -32,10 +32,9 @@ Several of these started as other people's ideas, and they deserve the credit:
 - **Clean View, Prompt Upgrade, Daily Challenge and Work Report** were built from prompts by Tristen O'Brien ([AI Made Easy](https://tristenobrien.ai/)). The ideas are Tristen's. These are my builds of them.
 - **Robert's Toolbox** is based on a toolbox Tristen O'Brien showed in a video ([tristenobrien.ai](https://tristenobrien.ai/)).
 - **Relay's** price table is adapted from [cache-tax](https://github.com/karanb192/cache-tax) by Karan Bansal (MIT License).
-- **`patches/skins/`** holds copies of a file from [skins](https://github.com/hellosverre/claude-skins) by hellosverre (MIT License). See [patches/skins/LICENSE-skins.txt](patches/skins/LICENSE-skins.txt).
 
 The mods themselves were built with Claude Code.
 
 ## License
 
-[MIT](LICENSE), except the files in `patches/skins/`, which keep the skins license.
+[MIT](LICENSE).
